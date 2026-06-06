@@ -177,13 +177,65 @@ def squeeze_momentum(close: pd.Series, high: pd.Series, low: pd.Series, bb_lengt
 # ══════════════════════════════════════════════════════════════════════════════
 #  CYCLE ANALYSIS CORE
 # ══════════════════════════════════════════════════════════════════════════════
+class DataFetchError(ValueError):
+    """Raised when Yahoo Finance returns no usable OHLCV bars."""
+
+
+def _normalize_yf_frame(data: pd.DataFrame | None) -> pd.DataFrame:
+    if data is None or not isinstance(data, pd.DataFrame) or data.empty:
+        return pd.DataFrame()
+    df = data.copy()
+    if isinstance(df.columns, pd.MultiIndex):
+        df.columns = [str(c[0]) if isinstance(c, tuple) else str(c) for c in df.columns]
+    df.columns = [str(c).strip() for c in df.columns]
+    return df
+
+
+def _series_from_frame(data: pd.DataFrame, col: str) -> pd.Series:
+    lookup = {c.lower(): c for c in data.columns}
+    key = col.lower()
+    if key not in lookup:
+        raise DataFetchError(f"Missing '{col}' column. Got: {list(data.columns)}")
+    s = data[lookup[key]]
+    if isinstance(s, pd.DataFrame):
+        s = s.iloc[:, 0]
+    return s.dropna()
+
+
 def download_ohlcv(symbol, start, end_inclusive):
+    symbol = (symbol or "").strip().upper()
+    if not symbol:
+        raise DataFetchError("Ticker symbol is required.")
+
     fetch_end = (pd.Timestamp(end_inclusive) + pd.Timedelta(days=1)).date().isoformat()
-    data = yf.download(symbol, start=start, end=fetch_end, auto_adjust=False, progress=False)
-    def _sq(col):
-        s = data[col]; return (s.iloc[:,0] if isinstance(s, pd.DataFrame) else s).dropna()
-    idx = _sq("Close").index
-    return _sq("Close"), _sq("High").reindex(idx), _sq("Low").reindex(idx), _sq("Volume").reindex(idx)
+    data = _normalize_yf_frame(
+        yf.download(symbol, start=start, end=fetch_end, auto_adjust=False, progress=False, threads=False)
+    )
+    if data.empty:
+        data = _normalize_yf_frame(
+            yf.Ticker(symbol).history(start=start, end=fetch_end, auto_adjust=False)
+        )
+
+    if data.empty:
+        raise DataFetchError(
+            f"No OHLCV data for '{symbol}' ({start} → {end_inclusive}). "
+            "Check the ticker symbol or retry later — Yahoo Finance may be rate-limiting."
+        )
+
+    close = _series_from_frame(data, "Close")
+    if len(close) < 3:
+        raise DataFetchError(
+            f"Only {len(close)} bar(s) returned for '{symbol}' ({start} → {end_inclusive}). "
+            "Need at least 3 trading days of data."
+        )
+
+    idx = close.index
+    return (
+        close,
+        _series_from_frame(data, "High").reindex(idx).dropna(),
+        _series_from_frame(data, "Low").reindex(idx).dropna(),
+        _series_from_frame(data, "Volume").reindex(idx).dropna(),
+    )
 
 def scale_composite_to_price(close, composite):
     ins = composite[:len(close)]; lp,hp = np.quantile(close.values,[.05,.95]); lc,hc = np.quantile(ins,[.05,.95])
@@ -197,6 +249,9 @@ def compose_full_series(coefficients, full_length, periods):
     return np.sum([np.column_stack([np.sin(2*np.pi*t/p), np.cos(2*np.pi*t/p)]) @ coefficients[p] for p in periods], axis=0)
 
 def detrend_series(values: np.ndarray, degree: int = DEFAULT_TREND_DEGREE):
+    values = np.asarray(values, dtype=float)
+    if len(values) == 0:
+        raise DataFetchError("Cannot detrend an empty price series — no market data was loaded.")
     t = np.arange(len(values), dtype=float)
     if len(values) < 3: return values - np.polyval(np.polyfit(t, values, 1), t), np.polyval(np.polyfit(t, values, 1), t)
     degree = max(1, min(int(degree), 3, len(values) - 1))

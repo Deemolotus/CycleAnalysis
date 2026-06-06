@@ -63,7 +63,12 @@ def run_analysis(params: AnalysisParams) -> dict:
         log.append("Auto lookback: fetching max window for DFE + sweep…")
 
     close, high, low, volume = qe.download_ohlcv(symbol, start_date, end_date)
-    log.append(f"  Downloaded {len(close)} bars")
+    log.append(f"  Downloaded {len(close)} bars ({start_date} → {end_date})")
+    if len(close) < qe.MIN_LOOKBACK_BARS:
+        log.append(
+            f"  Warning: only {len(close)} bars available; "
+            f"recommended minimum is {qe.MIN_LOOKBACK_BARS}."
+        )
 
     if auto_lookback:
         log.append("Auto-selecting lookback (period-driven min + stability sweep)…")
@@ -222,6 +227,8 @@ def main() -> None:
             result = run_analysis(params)
         st.session_state["last_result"] = result
         _render_result(result)
+    except qe.DataFetchError as exc:
+        st.error(str(exc))
     except Exception:
         st.error("分析失败，请检查参数或稍后重试。")
         st.code(traceback.format_exc())
