@@ -1,0 +1,27 @@
+name: Streamlit Random Keep-Alive
+
+on:
+  schedule:
+    # 每 3 小时触发一次 (UTC 时间 0, 3, 6, 9, 12, 15, 18, 21 点)
+    - cron: '0 */3 * * *'
+  workflow_dispatch: 
+
+jobs:
+  keep-alive:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v3
+
+      - name: Random Sleep (Anti-Bot Detection)
+        run: |
+          RANDOM_DELAY=$(( RANDOM % 2700 ))
+          echo "为了防止被检测，脚本将随机等待 $RANDOM_DELAY 秒..."
+          sleep $RANDOM_DELAY
+          echo "等待结束，开始执行空提交..."
+
+      - name: Create empty commit
+        run: |
+          git config --global user.name 'GitHub Action'
+          git config --global user.email 'action@github.com'
+          git commit --allow-empty -m "chore: random random keep-alive $(date +'%Y-%m-%d %H:%M:%S')"
+          git push
