@@ -2,13 +2,14 @@ name: Streamlit Random Keep-Alive
 
 on:
   schedule:
-    # 每 3 小时触发一次 (UTC 时间 0, 3, 6, 9, 12, 15, 18, 21 点)
     - cron: '0 */3 * * *'
-  workflow_dispatch: 
+  workflow_dispatch:
 
 jobs:
   keep-alive:
     runs-on: ubuntu-latest
+    permissions:
+      contents: write # 明确授予写权限，防止由于 GitHub 默认设置导致的报错
     steps:
       - uses: actions/checkout@v3
 
@@ -17,11 +18,18 @@ jobs:
           RANDOM_DELAY=$(( RANDOM % 2700 ))
           echo "为了防止被检测，脚本将随机等待 $RANDOM_DELAY 秒..."
           sleep $RANDOM_DELAY
-          echo "等待结束，开始执行空提交..."
+          echo "等待结束，开始更新日志文件..."
 
-      - name: Create empty commit
+      - name: Update log file and commit
         run: |
-          git config --global user.name 'GitHub Action'
-          git config --global user.email 'action@github.com'
-          git commit --allow-empty -m "chore: random random keep-alive $(date +'%Y-%m-%d %H:%M:%S')"
+          # 1. 往 keepalive.log 文件中追加当前时间（如果文件不存在会自动创建）
+          echo "Keep-alive ping at: $(date +'%Y-%m-%d %H:%M:%S')" >> keepalive.log
+          
+          # 2. 配置 Git 机器人账号
+          git config --global user.name 'github-actions[bot]'
+          git config --global user.email 'github-actions[bot]@users.noreply.github.com'
+          
+          # 3. 提交并推送到仓库
+          git add keepalive.log
+          git commit -m "chore: append keepalive log [skip ci]"
           git push
